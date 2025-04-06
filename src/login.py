@@ -1,7 +1,10 @@
 import customtkinter as ctk
+from tkinter import messagebox
 import json
 import os
 import pandas as pd
+import subprocess
+import sys
 
 if not os.path.exists("login_mails/login_database.csv"):      
     # create empty dataframe
@@ -13,7 +16,15 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Connect")
-        self.geometry("500x500")
+        
+        #center the app in the screen
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        
+        x = (screen_width // 2) - (500 // 2)
+        y = (screen_height // 2) - (500 // 2)
+        
+        self.geometry(f"500x500+{x}+{y}")
         
         #read the preferences.json file
         with open ('preferences.json', "r") as f:
@@ -23,10 +34,6 @@ class App(ctk.CTk):
 
         #call the method to create the widgets
         self.login_widget()
-        
-        #----------------
-        #switch between login and register
-        #----------------
 
     def login_widget(self):#main frame
         login_frame = ctk.CTkFrame(self)
@@ -35,10 +42,6 @@ class App(ctk.CTk):
         #label
         label = ctk.CTkLabel(login_frame,text="Log in",font = ctk.CTkFont(size = 20, weight = "bold"))
         label.pack(pady=(20,50)) 
-        
-        #----------------------------------
-        #add login and account creation
-        #----------------------------------
         
         #entries
         entries = []
@@ -81,7 +84,7 @@ class App(ctk.CTk):
         
         self.placeholders(register_frame,placeholders_values,entries)
         
-        submit = ctk.CTkButton(register_frame, text="Register") #command-----------------------
+        submit = ctk.CTkButton(register_frame, text="Register" , command = lambda : self.register_database(entries)) #command-------------------------------
         submit.pack(pady=(0,20))
         
         register_label = ctk.CTkLabel(register_frame, text="Already have an account? Log in now!",cursor ="hand2", text_color="#3498db",font=("Arial", 12, "bold"))
@@ -101,13 +104,53 @@ class App(ctk.CTk):
         
         # read the csv file   
         df = pd.read_csv("login_mails/login_database.csv")
-        user = entries[0].get()
-        print(user)
-        for names in df["Name"].values:
-            if names == entries[0].get():
-                print("gyaaaaaaaaaaaaat")
         
+        # get entries
+        email = entries[0].get().strip()
+        password = entries[1].get().strip()
         
+        # check if the email and password exist in the database
+        match = df[(df['Email'] == email) & (df['Password'] == password)]
+        
+        #if exist return login successfull and open the app
+        if not match.empty:
+            print("Login successful!")
+            user = {
+                "name": match['Name'].values[0],
+            }
+            with open("config.json", "w")as f:
+                json.dump(user,f,indent= 4)
+            
+            
+            self.destroy()
+            
+            try:
+                subprocess.Popen([sys.executable, "main.py"])
+            except Exception as e:
+                print(f"Error launching application: {e}")
+            finally:
+                sys.exit(0)
+            
+        else:
+            messagebox.showerror("Error", "Email or password incorrect!")
+                
+    def register_database(self,entries):
+        # get values
+        name=entries[0].get()
+        email = entries[1].get()
+        password = entries[2].get()
+        conf_password = entries[3].get()
+        hopital = entries[4].get()
+        
+        #enter the values in the csv file
+        if password == conf_password:
+            new_data = {"Name" : [name],"Email" : [email],"Password" : [password],"Hospital" : [hopital]}
+            new_df = pd.DataFrame(new_data)
+            new_df.to_csv("login_mails/login_database.csv",mode ="a", header = False ,index = False)
+        
+        #check if the password is the same    
+        else :
+            messagebox.showinfo("Error","The password does not match the confirmation")
         
                     
                 

@@ -29,7 +29,15 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Med App")
-        self.geometry("400x400")
+        
+        #center the app in the screen
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        
+        x = (screen_width // 2) - (500 // 2)
+        y = (screen_height // 2) - (500 // 2)
+        
+        self.geometry(f"400x400+{x}+{y}")
         
         # Set initial theme
         ctk.set_appearance_mode("system")  # "system", "dark", or "light"
