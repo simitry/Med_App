@@ -172,3 +172,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+#in file
+src/app_test.py
+src/app_test2.py
