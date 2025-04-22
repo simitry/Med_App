@@ -13,6 +13,7 @@ if not os.path.exists("login_mails/login_database.csv"):
     # create the csv file
     df.to_csv("login_mails/login_database.csv", index = False)
 class App(ctk.CTk):
+    """login app class"""
     def __init__(self):
         super().__init__()
         self.title("Connect")
@@ -36,6 +37,7 @@ class App(ctk.CTk):
         self.login_widget()
 
     def login_widget(self):#main frame
+        """create a login widget"""
         login_frame = ctk.CTkFrame(self)
         login_frame.pack(pady=20, padx=20, fill="both", expand=True)
         
@@ -60,18 +62,21 @@ class App(ctk.CTk):
         register_label.bind("<Button-1>", self.To_register)
         
     def To_register(self, event = None):
+        """this function switch to the register widget"""
         #clear the current frame and call the register method
         for widget in self.winfo_children():
             widget.destroy()
         self.register_widget()
     
     def To_login(self, event = None):
+        """this function switch to the login widget"""
         #clear the current frame and call the login widget
         for widget in self.winfo_children():
             widget.destroy()
         self.login_widget()
     
     def register_widget(self):
+        """create the register widget"""
         #register frame
         register_frame = ctk.CTkFrame(self)
         register_frame.pack(pady=20, padx=20, fill="both", expand=True)
@@ -95,12 +100,14 @@ class App(ctk.CTk):
         
     # create placeholders
     def placeholders(self,frame,placeholders_values,entries):
+        """depending on the widget, this function create placeholders for user's input"""
         for i in placeholders_values:
             entry = ctk.CTkEntry(frame, placeholder_text= i)
             entry.pack(pady=(0, 20), padx = 15,fill="x")
             entries.append(entry)
     
     def login_database(self, entries):
+        """this function match the login input from the user with the csv data to confirm login"""
         
         # read the csv file   
         df = pd.read_csv("login_mails/login_database.csv")
@@ -135,6 +142,8 @@ class App(ctk.CTk):
             messagebox.showerror("Error", "Email or password incorrect!")
                 
     def register_database(self,entries):
+        """this function enter the data entered by the user to the csv file"""
+        
         # get values
         name=entries[0].get()
         email = entries[1].get()
