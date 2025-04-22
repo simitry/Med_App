@@ -2,6 +2,7 @@ import torchxrayvision as xrv
 import skimage, torch, torchvision
 
 def scan_image(img_thorax):
+    """scan the image given and return the ai result"""
     # Prepare the image:
     img = skimage.io.imread(img_thorax)
     img = xrv.datasets.normalize(img, 255) # convert 8-bit image to [-1024, 1024] range

@@ -176,3 +176,5 @@ cython_debug/
 #in file
 src/app_test.py
 src/app_test2.py
+src/main_backup.py
+src/test.py

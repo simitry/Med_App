@@ -11,6 +11,7 @@ data = {
 }
 
 class SignalHandler:
+    """handle the the case of quiting or destroying the app"""
     def __init__(self, app):
         self.app = app
         self.shutdown_requested = False
@@ -26,6 +27,7 @@ class SignalHandler:
         return not self.shutdown_requested
 
 class App(ctk.CTk):
+    """preference app class"""
     def __init__(self):
         super().__init__()
         self.title("Med App")
