@@ -12,6 +12,7 @@ if not os.path.exists("login_mails/login_database.csv"):
             
     # create the csv file
     df.to_csv("login_mails/login_database.csv", index = False)
+    
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
