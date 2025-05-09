@@ -174,9 +174,10 @@ cython_debug/
 .pypirc
 
 #in file
-src/app_test.py
-src/app_test2.py
-src/main_backup.py
-src/main_backup2.py
-src/test.py
-src/database.py
+src/test_files/app_test.py
+src/test_files/app_test2.py
+src/test_files/main_backup.py
+src/test_files/main_backup2.py
+src/test_files/test.py
+src/test_files/database.py
+src/test_files
