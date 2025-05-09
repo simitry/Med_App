@@ -177,4 +177,6 @@ cython_debug/
 src/app_test.py
 src/app_test2.py
 src/main_backup.py
+src/main_backup2.py
 src/test.py
+src/database.py

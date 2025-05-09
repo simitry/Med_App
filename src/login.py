@@ -1,17 +1,36 @@
 import customtkinter as ctk
 from tkinter import messagebox
 import json
-import os
-import pandas as pd
 import subprocess
 import sys
+import sqlite3
 
-if not os.path.exists("login_mails/login_database.csv"):      
-    # create empty dataframe
-    df = pd.DataFrame(columns=["Name", "Email", "Password","Hospital"]) 
-            
-    # create the csv file
-    df.to_csv("login_mails/login_database.csv", index = False)
+
+# create empty sqlite database
+conn = sqlite3.connect("login_mails/database.db")
+c = conn.cursor()
+
+def check_table(table_name):
+    c.execute("""
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name=?;
+    """, (table_name,))
+    if not c.fetchone():
+        return False
+    return True
+    
+if not check_table("login"):
+    c.execute("""CREATE TABLE login(
+              ID INTEGER PRIMARY KEY AUTOINCREMENT,
+              Name TEXT,
+              Email TEXT,
+              Password TEXT,
+              Hospital TEXT
+              )""")
+    
+    conn.commit()
+
+
 class App(ctk.CTk):
     """login app class"""
     def __init__(self):
@@ -109,21 +128,23 @@ class App(ctk.CTk):
     def login_database(self, entries):
         """this function match the login input from the user with the csv data to confirm login"""
         
-        # read the csv file   
-        df = pd.read_csv("login_mails/login_database.csv")
-        
         # get entries
         email = entries[0].get().strip()
         password = entries[1].get().strip()
         
         # check if the email and password exist in the database
-        match = df[(df['Email'] == email) & (df['Password'] == password)]
+        c.execute(f"SELECT * FROM login WHERE Email = '{email}' AND Password = '{password}'")
+  
         
+
         #if exist return login successfull and open the app
-        if not match.empty:
+        data = c.fetchall()
+
+        if data:
             print("Login successful!")
+            data = data[0]
             user = {
-                "name": match['Name'].values[0],
+                "name": data[1],
             }
             with open("config.json", "w")as f:
                 json.dump(user,f,indent= 4)
@@ -142,38 +163,25 @@ class App(ctk.CTk):
             messagebox.showerror("Error", "Email or password incorrect!")
                 
     def register_database(self,entries):
-        """this function enter the data entered by the user to the csv file"""
+        """this function enter the data entered by the user to the sqlite file"""
         
         # get values
         name=entries[0].get()
         email = entries[1].get()
         password = entries[2].get()
         conf_password = entries[3].get()
-        hopital = entries[4].get()
-        
-        #enter the values in the csv file
+        hospital = entries[4].get()
+
+        #insert values in the sqlite database
         if password == conf_password:
-            new_data = {"Name" : [name],"Email" : [email],"Password" : [password],"Hospital" : [hopital]}
-            new_df = pd.DataFrame(new_data)
-            new_df.to_csv("login_mails/login_database.csv",mode ="a", header = False ,index = False)
+            c.execute(f"INSERT INTO login (Name,Email,Password,Hospital) VALUES('{name}','{email}','{password}','{hospital}')")
+
+            conn.commit()
         
         #check if the password is the same    
         else :
             messagebox.showinfo("Error","The password does not match the confirmation")
         
-                    
-                
-# app = ctk.CTk()
-# with open ('preferences.json', "r") as f:
-#     data = json.load(f)
-#     ctk.set_appearance_mode(data["Appearance"])
-#     ctk.set_default_color_theme(data["ThemeColor"])
-    
-# app.geometry("500x500")
-# app.title("test")
-
-
-# app.mainloop()
 
 if __name__ == "__main__":
     app = App()

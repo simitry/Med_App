@@ -19,5 +19,6 @@ def scan_image(img_thorax):
 
     # Print results
     output= dict(zip(model.pathologies,outputs[0].detach().numpy()))
-
+    # print(output)
+    
     return output
