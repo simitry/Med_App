@@ -4,7 +4,14 @@ import json
 import os
 import threading
 from tkinter import messagebox
-from pdf import *
+import sys
+sys.path.append(os.path.dirname(__file__))
+from pdf import PDF
+
+BASE_DIR = os.path.dirname(__file__)
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..'))
+PREFERENCES_PATH = os.path.join(PROJECT_ROOT, 'preferences.json')
+CONFIG_PATH = os.path.join(PROJECT_ROOT, 'config.json')
 
 scan_output = " "
 
@@ -24,16 +31,14 @@ class App(ctk.CTk):
         self.geometry(f"800x500+{x}+{y}")
         
         # Load appearance settings
-        with open('preferences.json') as f:
+        with open(PREFERENCES_PATH, encoding="utf-8") as f:
             data = json.load(f)
             ctk.set_appearance_mode(data['Appearance'])
             ctk.set_default_color_theme(data['ThemeColor'])
-            
-        if not self.ai_ready:
-            self.show_loading_screen()
-            self.after(100, self.check_ai_status)
-        else:
-            self.show_main_interface()
+
+        self.scan_image = None
+        self.ai_loading = False
+        self.show_main_interface()
     
     def show_loading_screen(self):
         """Show loading screen while AI loads"""
@@ -79,9 +84,11 @@ class App(ctk.CTk):
         self.results_frame.pack(pady=10, padx=10, fill="both", expand=True)
         
         # Load user name
-        with open('config.json') as f:
-            data = json.load(f)
-            self.name = data['name']
+        self.name = "Doctor"
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+                self.name = data.get('name', self.name)
         
         # Display welcome message
         label2 = ctk.CTkLabel(self.frame2, text=f"Hello {self.name}!", font=("Arial", 16))
@@ -93,8 +100,8 @@ class App(ctk.CTk):
         
         # Delete config file
         try:
-            os.remove("config.json")
-        except:
+            os.remove(CONFIG_PATH)
+        except OSError:
             pass
         
         # Add browse button
@@ -114,9 +121,12 @@ class App(ctk.CTk):
 
     def upload_file(self):
         """Handle file upload and processing"""
+        if not self.ensure_ai_loaded():
+            return
+
         file_path = filedialog.askopenfilename(
             title="Select a file", 
-            filetypes=[("Images", "*.jpg *.png")]
+            filetypes=[("Images", "*.jpg *.jpeg *.png")]
         )
         
         if file_path:
@@ -126,6 +136,53 @@ class App(ctk.CTk):
                 self.display_results(scan_output)
             except Exception as e:
                 messagebox.showerror("Error", f"Error processing image: {e}")
+
+    def ensure_ai_loaded(self):
+        """Load the AI model on demand before scanning."""
+        if callable(self.scan_image):
+            return True
+
+        if self.ai_loading:
+            messagebox.showinfo("Loading", "AI components are still loading. Please try again in a moment.")
+            return False
+
+        self.ai_loading = True
+        loading_dialog = ctk.CTkToplevel(self)
+        loading_dialog.title("Loading")
+        loading_dialog.geometry("320x120")
+        loading_dialog.transient(self)
+        loading_dialog.grab_set()
+
+        label = ctk.CTkLabel(loading_dialog, text="Loading AI components...")
+        label.pack(pady=(20, 10))
+
+        progress = ctk.CTkProgressBar(loading_dialog)
+        progress.pack(padx=20, fill="x")
+        progress.start()
+
+        error_holder = {"message": None}
+
+        def loader():
+            try:
+                from torch_ai import scan_image as ai_scan_image
+                self.scan_image = ai_scan_image
+            except Exception as exc:
+                error_holder["message"] = str(exc)
+            finally:
+                self.after(0, finish_loading)
+
+        def finish_loading():
+            progress.stop()
+            loading_dialog.grab_release()
+            loading_dialog.destroy()
+            self.ai_loading = False
+
+            if error_holder["message"]:
+                messagebox.showerror("AI Error", f"Failed to load AI components: {error_holder['message']}")
+
+        threading.Thread(target=loader, daemon=True).start()
+        self.wait_window(loading_dialog)
+        return callable(self.scan_image)
 
     def display_results(self, results):
         """Display scan results in the results frame"""
@@ -153,50 +210,89 @@ class App(ctk.CTk):
     def Generate_pdf_file(self):
         if scan_output == " ":
             messagebox.showinfo("Error", "You need to choose an image first!")
-        else:
-            Pname = simpledialog.askstring(
-                "Patient name", 
-                "Enter the patient name:", 
-                parent=self
+            return
+
+        Pname = simpledialog.askstring(
+            "Patient name", 
+            "Enter the patient name:", 
+            parent=self
+        )
+        if not Pname:
+            return
+
+        Page = simpledialog.askstring(
+            "Patient age", 
+            "Enter the patient age:", 
+            parent=self
+        )
+        if not Page:
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF Files", "*.pdf")],
+            initialfile="Rapport.pdf",
+            title="Save PDF Report As"
+        )
+        if not file_path:
+            return
+
+        pdf = PDF()
+        pdf.add_page()
+        pdf.Header(Pname, Page, self.name)
+        pdf.Body(scan_output)
+        pdf.output(file_path)
+        
+        # Blockchain integration
+        try:
+            from blockchain import publish_report
+            
+            blockchain_choice = messagebox.askyesno(
+                "Blockchain Verification", 
+                "Would you like to publish this report to the blockchain for verification?"
             )
-            if Pname:  # Only proceed if name was entered
-                Page = simpledialog.askstring(
-                    "Patient age", 
-                    "Enter the patient age:", 
-                    parent=self
-                )
-                if Page:  # Only proceed if age was entered
-                    
-                    # Ask user where to save the file
-                    file_path = filedialog.asksaveasfilename(
-                    defaultextension=".pdf",
-                    filetypes=[("PDF Files", "*.pdf")],
-                    initialfile="Rapport.pdf",
-                    title="Save PDF Report As"
+            
+            if blockchain_choice:
+                provider_url = "https://mainnet.infura.io/v3/YOUR_INFURA_KEY"
+                contract_address = "0xYOUR_CONTRACT_ADDRESS"
+                
+                success = publish_report(
+                    file_path, 
+                    Pname, 
+                    Page,
+                    provider_url,
+                    contract_address
                 )
                 
-                if file_path:  # Only proceed if user didn't cancel
-                    pdf = PDF()
-                    pdf.add_page()
-                    pdf.Header(Pname, Page, self.name)
-                    pdf.Body(scan_output)
-                    pdf.output(file_path)
-                    messagebox.showinfo("Success", f"PDF report saved successfully at:\n{file_path}")
-
-def load_ai_components(app):
-    """Load AI components in background"""
-    try:
-        from torch_ai import scan_image
-        app.scan_image = scan_image
-    except Exception as e:
-        print(f"Failed to load AI components: {e}")
+                if success:
+                    messagebox.showinfo(
+                        "Blockchain Success", 
+                        "Report published to blockchain successfully!\n\n"
+                        "You can now verify the report integrity using the verification script."
+                    )
+                else:
+                    messagebox.showwarning(
+                        "Blockchain Warning", 
+                        "PDF saved successfully, but blockchain publishing failed.\n\n"
+                        "Please check your blockchain configuration and try again."
+                    )
+            else:
+                messagebox.showinfo("Success", f"PDF report saved successfully at:\n{file_path}")
+                
+        except ImportError:
+            messagebox.showwarning(
+                "Blockchain Module Missing", 
+                "Blockchain module not found. PDF saved successfully.\n\n"
+                "Install blockchain dependencies: pip install web3 eth-account eth-utils"
+            )
+            messagebox.showinfo("Success", f"PDF report saved successfully at:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror(
+                "Blockchain Error", 
+                f"PDF saved successfully, but blockchain error occurred:\n{str(e)}"
+            )
+            messagebox.showinfo("Success", f"PDF report saved successfully at:\n{file_path}")
 
 if __name__ == "__main__":
-    # Create app with loading screen
     app = App(ai_ready=False)
-    
-    # Start loading AI components in background
-    threading.Thread(target=load_ai_components, args=(app,), daemon=True).start()
-    
-    # Start the app
     app.mainloop()

@@ -1,4 +1,8 @@
 from fpdf import FPDF
+import os
+
+BASE_DIR = os.path.dirname(__file__)
+HEADER_IMAGE_PATH = os.path.join(BASE_DIR, "img", "SRLF_1117647020.jpg")
 
 class PDF(FPDF):
     def Header(self,Pname,Page,Dname):
@@ -13,7 +17,8 @@ class PDF(FPDF):
         self.cell(0,10, f"Patient's age : {Page}",align='L')
         
         self.cell(40)
-        self.image("img/SRLF_1117647020.jpg",100,30,100)
+        if os.path.exists(HEADER_IMAGE_PATH):
+            self.image(HEADER_IMAGE_PATH,100,30,100)
         self.cell(5)
         self.ln(40)
         self.set_font("helvetica", style="U", size=18)

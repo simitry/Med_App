@@ -6,9 +6,14 @@ import os
 import signal
 
 data = {
-    "Appearance": " ",
-    "ThemeColor": " ",
+    "Appearance": "system",
+    "ThemeColor": "green",
 }
+
+BASE_DIR = os.path.dirname(__file__)
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+PREFERENCES_PATH = os.path.join(PROJECT_ROOT, "preferences.json")
+LOGIN_SCRIPT = os.path.join(BASE_DIR, "login.py")
 
 class SignalHandler:
     """handle the the case of quiting or destroying the app"""
@@ -18,7 +23,7 @@ class SignalHandler:
         signal.signal(signal.SIGINT, self.request_shutdown)
         signal.signal(signal.SIGTERM, self.request_shutdown)
     
-    def request_shutdown(self):
+    def request_shutdown(self, signum, frame):
         print("\nShutdown requested...")
         self.shutdown_requested = True
         self.app.quit()
@@ -48,13 +53,14 @@ class App(ctk.CTk):
         # Build the UI
         self.rebuild_ui() 
         
-        if os.path.exists("preferences.json"):
-            with open("preferences.json", "r") as f:
+        if os.path.exists(PREFERENCES_PATH):
+            with open(PREFERENCES_PATH, "r", encoding="utf-8") as f:
                 loaded_data = json.load(f)
-                if loaded_data != data and loaded_data != " ":
+                if loaded_data.get("ThemeColor") and loaded_data.get("Appearance"):
+                    data.update(loaded_data)
                     self.confirm()
         else:
-            with open("preferences.json", "w") as f:
+            with open(PREFERENCES_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
             print('Json file created')
                 
@@ -78,10 +84,11 @@ class App(ctk.CTk):
         
         self.theme_menu = ctk.CTkOptionMenu(
             self.frame,
-            values=[" ","blue", "green", "dark-blue"],
+            values=["blue", "green", "dark-blue"],
             command=self.change_color_theme
         )
         self.theme_menu.pack(pady=5)
+        self.theme_menu.set(data["ThemeColor"])
         
         # Dark/light mode switcher
         self.mode_label = ctk.CTkLabel(self.frame, text="Appearance Mode:")
@@ -89,10 +96,11 @@ class App(ctk.CTk):
         
         self.mode_menu = ctk.CTkOptionMenu(
             self.frame,
-            values=[" ","system", "dark", "light"],
+            values=["system", "dark", "light"],
             command=self.change_appearance_mode
         )
         self.mode_menu.pack(pady=5)
+        self.mode_menu.set(data["Appearance"])
     
     def change_color_theme(self, new_theme):
         """Changes color theme and refreshes UI"""
@@ -106,21 +114,22 @@ class App(ctk.CTk):
         ctk.set_appearance_mode(new_mode)
         
     def create_pref(self):
-        with open("preferences.json", "w") as f:
+        with open(PREFERENCES_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
         print('Json file created')
     
     def confirm(self):
-        if os.path.exists("preferences.json"):
-            with open("preferences.json", "r") as f:
+        self.create_pref()
+
+        if os.path.exists(PREFERENCES_PATH):
+            with open(PREFERENCES_PATH, "r", encoding="utf-8") as f:
                 loaded_data = json.load(f)
-                if loaded_data["ThemeColor"] == " " or loaded_data["Appearance"] == " ":
-                    self.create_pref()
+                data.update(loaded_data)
         
         self.destroy()
         
         try:
-            subprocess.Popen([sys.executable, "login.py"])
+            subprocess.Popen([sys.executable, LOGIN_SCRIPT], cwd=BASE_DIR)
         except Exception as e:
             print(f"Error launching application: {e}")
         finally:

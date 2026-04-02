@@ -4,10 +4,19 @@ import json
 import subprocess
 import sys
 import sqlite3
+import os
 
+BASE_DIR = os.path.dirname(__file__)
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+DATABASE_DIR = os.path.join(BASE_DIR, "login_mails")
+DATABASE_PATH = os.path.join(DATABASE_DIR, "database.db")
+PREFERENCES_PATH = os.path.join(PROJECT_ROOT, "preferences.json")
+CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.json")
+MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
 
 # create empty sqlite database
-conn = sqlite3.connect("login_mails/database.db")
+os.makedirs(DATABASE_DIR, exist_ok=True)
+conn = sqlite3.connect(DATABASE_PATH)
 c = conn.cursor()
 
 def check_table(table_name):
@@ -47,7 +56,7 @@ class App(ctk.CTk):
         self.geometry(f"500x500+{x}+{y}")
         
         #read the preferences.json file
-        with open ('preferences.json', "r") as f:
+        with open(PREFERENCES_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
             ctk.set_appearance_mode(data["Appearance"])
             ctk.set_default_color_theme(data["ThemeColor"])
@@ -121,7 +130,7 @@ class App(ctk.CTk):
     def placeholders(self,frame,placeholders_values,entries):
         """depending on the widget, this function create placeholders for user's input"""
         for i in placeholders_values:
-            entry = ctk.CTkEntry(frame, placeholder_text= i)
+            entry = ctk.CTkEntry(frame, placeholder_text=i, show="*" if "Password" in i or i == "password" else "")
             entry.pack(pady=(0, 20), padx = 15,fill="x")
             entries.append(entry)
     
@@ -131,29 +140,32 @@ class App(ctk.CTk):
         # get entries
         email = entries[0].get().strip()
         password = entries[1].get().strip()
+
+        if not email or not password:
+            messagebox.showerror("Error", "Please enter both email and password.")
+            return
         
         # check if the email and password exist in the database
-        c.execute(f"SELECT * FROM login WHERE Email = '{email}' AND Password = '{password}'")
+        c.execute("SELECT * FROM login WHERE Email = ? AND Password = ?", (email, password))
   
         
 
         #if exist return login successfull and open the app
-        data = c.fetchall()
+        data = c.fetchone()
 
         if data:
             print("Login successful!")
-            data = data[0]
             user = {
                 "name": data[1],
             }
-            with open("config.json", "w")as f:
+            with open(CONFIG_PATH, "w", encoding="utf-8")as f:
                 json.dump(user,f,indent= 4)
             
             
             self.destroy()
             
             try:
-                subprocess.Popen([sys.executable, "main.py"])
+                subprocess.Popen([sys.executable, MAIN_SCRIPT], cwd=BASE_DIR)
             except Exception as e:
                 print(f"Error launching application: {e}")
             finally:
@@ -172,11 +184,25 @@ class App(ctk.CTk):
         conf_password = entries[3].get()
         hospital = entries[4].get()
 
+        if not all([name.strip(), email.strip(), password, conf_password, hospital.strip()]):
+            messagebox.showerror("Error", "Please fill in all fields.")
+            return
+
         #insert values in the sqlite database
         if password == conf_password:
-            c.execute(f"INSERT INTO login (Name,Email,Password,Hospital) VALUES('{name}','{email}','{password}','{hospital}')")
+            c.execute("SELECT 1 FROM login WHERE Email = ?", (email,))
+            if c.fetchone():
+                messagebox.showerror("Error", "An account with this email already exists.")
+                return
+
+            c.execute(
+                "INSERT INTO login (Name,Email,Password,Hospital) VALUES(?, ?, ?, ?)",
+                (name, email, password, hospital),
+            )
 
             conn.commit()
+            messagebox.showinfo("Success", "Registration completed. You can log in now.")
+            self.To_login()
         
         #check if the password is the same    
         else :
