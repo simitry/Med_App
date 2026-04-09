@@ -1,133 +1,103 @@
-# Medical AI Application with Blockchain Verification
+# Medical AI Blockchain Setup
 
-A comprehensive medical AI application that analyzes X-ray images using PyTorch and generates tamper-proof PDF reports with blockchain verification.
+This project now uses:
 
-## Features
+- Hardhat for local smart contract development and deployment
+- Pinata for PDF storage on IPFS
+- `DoctorRegistry` to verify doctor integrity
+- `MedicalReportRegistry` to publish and verify report hashes
 
-- **AI-Powered Diagnosis**: Uses PyTorch and TorchXRayVision for automated disease detection in X-ray images
-- **PDF Report Generation**: Creates professional medical reports using FPDF
-- **Blockchain Verification**: Immutable report storage and verification using Ethereum blockchain
-- **IPFS Storage**: Decentralized file storage for PDF reports
-- **Tkinter GUI**: User-friendly interface with CustomTkinter
+## Contracts
 
-## Installation
+- `contracts/DoctorRegistry.sol`
+  Checks whether a doctor wallet is registered, verified, and active.
+- `contracts/MedicalReportRegistry.sol`
+  Stores report hashes and only accepts publications from doctors in good standing.
 
-1. Clone or download the project
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Local Setup
 
-3. Set up blockchain configuration (see Blockchain Setup section below)
+1. Install Python dependencies:
 
-## Usage
-
-1. Run the application:
-   ```bash
-   python src/app.py
-   ```
-
-2. Configure appearance preferences
-3. Log in or register
-4. Upload an X-ray image
-5. Generate PDF report with optional blockchain verification
-
-## Blockchain Setup
-
-### 1. Smart Contract Deployment
-
-Deploy the `MedicalReportRegistry.sol` contract to your preferred Ethereum network:
-
-- **Testnet**: Sepolia, Goerli, or Mumbai (Polygon)
-- **Mainnet**: Ethereum mainnet (requires real ETH)
-
-Use Remix IDE, Hardhat, or Truffle for deployment.
-
-### 2. Configuration
-
-Update the blockchain configuration in `src/main.py` and `src/blockchain.py`:
-
-```python
-# Replace with your actual values
-provider_url = "https://mainnet.infura.io/v3/YOUR_INFURA_KEY"
-contract_address = "0xYOUR_DEPLOYED_CONTRACT_ADDRESS"
+```bash
+pip install -r requirements.txt
 ```
 
-### 3. IPFS Setup
+2. Install Node dependencies:
 
-For IPFS uploads, you have several options:
+```bash
+npm install
+```
 
-- **Local IPFS Node**: Install and run IPFS daemon locally
-- **Pinata**: Use Pinata's API service
-- **Web3.Storage**: Use Protocol Labs' service
-- **Infura IPFS**: Use Infura's IPFS service
+3. Start a local Hardhat node:
 
-Update the IPFS configuration in `blockchain.py` accordingly.
+```bash
+npm run node
+```
 
-## Blockchain Features
+4. In another terminal, compile and deploy:
 
-### PDF Hashing
-- Calculates SHA256 hash of generated PDF reports
-- Ensures report integrity and tamper detection
+```bash
+npm run compile
+npm run deploy:local
+```
 
-### IPFS Storage
-- Uploads PDF files to decentralized storage
-- Returns Content Identifier (CID) for retrieval
+This generates:
 
-### Smart Contract Integration
-- Publishes report metadata to blockchain
-- Stores: Report ID, PDF hash, IPFS CID, Patient hash, Doctor address, Timestamp
+- `blockchain_config.json`
+- `blockchain_artifacts/MedicalReportRegistry.abi.json`
+- `blockchain_artifacts/DoctorRegistry.abi.json`
 
-### Report Verification
-Use the verification script to check report integrity:
+## Pinata Credentials
+
+Set one of these options before publishing a report:
+
+### Option A: JWT
+
+```bash
+set PINATA_JWT=your_pinata_jwt
+```
+
+### Option B: API key + secret
+
+```bash
+set PINATA_API_KEY=your_pinata_api_key
+set PINATA_SECRET_API_KEY=your_pinata_secret
+```
+
+## How the flow works
+
+1. Hardhat deploys `DoctorRegistry`
+2. Hardhat deploys `MedicalReportRegistry` with the doctor registry address
+3. The deploy script registers one bootstrap doctor from the local Hardhat accounts
+4. The Python app reads `blockchain_config.json`
+5. When a PDF is created, the app uploads it to Pinata
+6. The report hash is published on-chain only if the configured doctor wallet passes the doctor integrity check
+7. The desktop app shows the generated `Report ID`, which you use later for verification
+
+## App Run
+
+Run the desktop app:
+
+```bash
+python src/app.py
+```
+
+Open the built-in verifier from the main screen, or run it directly:
+
+```bash
+python src/agent_app.py
+```
+
+Verify a report later:
 
 ```bash
 python src/verify_report.py path/to/report.pdf REPORT_ID
 ```
 
-## Project Structure
+## Important Notes
 
-```
-src/
-├── app.py              # Preferences/settings app
-├── login.py            # Login/registration system
-├── main.py             # Main application with AI and PDF generation
-├── pdf.py              # PDF generation utilities
-├── torch_ai.py         # PyTorch AI model for X-ray analysis
-├── blockchain.py       # Blockchain integration module
-├── verify_report.py    # Report verification script
-└── MedicalReportRegistry.sol  # Smart contract
-```
-
-## Dependencies
-
-- **AI/ML**: torch, torchvision, torchxrayvision, scikit-image
-- **GUI**: customtkinter, tkinter
-- **PDF**: fpdf2
-- **Blockchain**: web3.py, eth-account, eth-utils
-- **Database**: sqlite3 (built-in)
-- **HTTP**: requests
-
-## Security Considerations
-
-- Patient data is hashed before blockchain storage (privacy-preserving)
-- PDF hashes ensure tamper detection
-- Smart contract prevents duplicate reports
-- IPFS provides decentralized, permanent storage
-
-## Development
-
-The code is structured for easy integration and extension:
-
-- Modular blockchain functions in `blockchain.py`
-- Clean separation of concerns
-- Well-documented code with comments
-- Beginner-friendly structure
-
-## License
-
-This project is for educational and research purposes. Ensure compliance with medical data regulations (HIPAA, GDPR, etc.) before production use.
-
-## Disclaimer
-
-This application is not intended for clinical use without proper medical validation and regulatory approval. Always consult qualified medical professionals for diagnosis and treatment.
+- The local doctor account comes from the Hardhat node accounts.
+- If Hardhat is not running on `http://127.0.0.1:8545`, the Python app will not connect.
+- If Pinata credentials are missing, report publishing will stop before the blockchain transaction.
+- `blockchain_config.example.json` is only a template. The deploy script creates the real `blockchain_config.json`.
+- The duplicate `medd-main` project is no longer needed after the merge; the root project is now the single integrated app.

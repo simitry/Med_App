@@ -19,7 +19,7 @@ Dependencies:
 import os
 import sys
 
-from blockchain import BlockchainManager
+from blockchain import BlockchainManager, load_blockchain_config
 
 
 def main():
@@ -42,14 +42,17 @@ def main():
     print(f"Report ID: {report_id}")
     print()
 
-    provider_url = "https://mainnet.infura.io/v3/YOUR_INFURA_KEY"
-    contract_address = "0xYOUR_CONTRACT_ADDRESS"
+    blockchain_config = load_blockchain_config()
+    provider_url = blockchain_config.get("rpc_url")
+    contract_address = blockchain_config.get("report_contract_address")
 
     manager = BlockchainManager(provider_url, contract_address)
 
     print("Connecting to blockchain...")
     if not manager.connect_to_blockchain():
         print("Failed to connect to blockchain. Please check your configuration.")
+        if manager.get_last_error():
+            print(manager.get_last_error())
         sys.exit(1)
 
     print("Verifying report integrity...")
@@ -74,6 +77,8 @@ def main():
         print("- Report ID correctness")
         print("- Blockchain connection")
         print("- Smart contract configuration")
+        if manager.get_last_error():
+            print(f"- Details: {manager.get_last_error()}")
 
     print()
     return result == "VALID"

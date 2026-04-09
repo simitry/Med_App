@@ -183,3 +183,10 @@ src/test_files/main_backup2.py
 src/test_files/test.py
 src/test_files/database.py
 src/test_files
+node_modules/
+artifacts/
+cache/
+blockchain_artifacts/
+blockchain_config.json
+config.json
+.vscode/

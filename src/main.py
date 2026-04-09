@@ -3,17 +3,18 @@ from tkinter import filedialog, simpledialog
 import json
 import os
 import threading
+from datetime import datetime
 from tkinter import messagebox
 import sys
+from uuid import uuid4
 sys.path.append(os.path.dirname(__file__))
 from pdf import PDF
+from agent_app import open_verifier_window
 
 BASE_DIR = os.path.dirname(__file__)
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..'))
 PREFERENCES_PATH = os.path.join(PROJECT_ROOT, 'preferences.json')
 CONFIG_PATH = os.path.join(PROJECT_ROOT, 'config.json')
-
-scan_output = " "
 
 class App(ctk.CTk):
     """main app class"""
@@ -38,6 +39,7 @@ class App(ctk.CTk):
 
         self.scan_image = None
         self.ai_loading = False
+        self.scan_output = None
         self.show_main_interface()
     
     def show_loading_screen(self):
@@ -85,10 +87,15 @@ class App(ctk.CTk):
         
         # Load user name
         self.name = "Doctor"
+        self.wallet_address = None
+        self.blockchain_registered = False
+        self.verifier_window = None
         if os.path.exists(CONFIG_PATH):
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 data = json.load(f)
                 self.name = data.get('name', self.name)
+                self.wallet_address = data.get("wallet_address")
+                self.blockchain_registered = data.get("blockchain_registered", False)
         
         # Display welcome message
         label2 = ctk.CTkLabel(self.frame2, text=f"Hello {self.name}!", font=("Arial", 16))
@@ -97,12 +104,6 @@ class App(ctk.CTk):
         # Label for button
         label1 = ctk.CTkLabel(self.frame2, text="X-Ray Image", font=("Arial", 12))
         label1.pack(pady=(10,0), padx=0)
-        
-        # Delete config file
-        try:
-            os.remove(CONFIG_PATH)
-        except OSError:
-            pass
         
         # Add browse button
         browse = ctk.CTkButton(
@@ -119,6 +120,26 @@ class App(ctk.CTk):
         )
         Open_PDF.pack(pady=(0,20), padx=20, fill="both")
 
+        verify_button = ctk.CTkButton(
+            self.frame2,
+            text='Verify Existing Report',
+            command=self.open_verifier
+        )
+        verify_button.pack(pady=(0, 20), padx=20, fill="both")
+
+        if self.wallet_address:
+            wallet_label = ctk.CTkLabel(
+                self.frame2,
+                text=f"Wallet: {self.wallet_address}",
+                wraplength=250,
+                justify="left"
+            )
+            wallet_label.pack(padx=20, pady=(0, 10))
+
+        status_text = "Registered on blockchain" if self.blockchain_registered else "Blockchain registration pending"
+        status_label = ctk.CTkLabel(self.frame2, text=status_text, font=("Arial", 12))
+        status_label.pack(padx=20, pady=(0, 10))
+
     def upload_file(self):
         """Handle file upload and processing"""
         if not self.ensure_ai_loaded():
@@ -131,9 +152,8 @@ class App(ctk.CTk):
         
         if file_path:
             try:
-                global scan_output
-                scan_output = self.scan_image(file_path)
-                self.display_results(scan_output)
+                self.scan_output = self.scan_image(file_path)
+                self.display_results(self.scan_output)
             except Exception as e:
                 messagebox.showerror("Error", f"Error processing image: {e}")
 
@@ -184,6 +204,14 @@ class App(ctk.CTk):
         self.wait_window(loading_dialog)
         return callable(self.scan_image)
 
+    def open_verifier(self):
+        """Open the verification tool inside the current desktop app."""
+        if self.verifier_window and self.verifier_window.winfo_exists():
+            self.verifier_window.focus()
+            return
+
+        self.verifier_window = open_verifier_window(self)
+
     def display_results(self, results):
         """Display scan results in the results frame"""
         # Clear previous results
@@ -207,8 +235,30 @@ class App(ctk.CTk):
             )
             result_label.pack(anchor="w", pady=2)
 
+    def generate_report_metadata(self):
+        """Create a human-friendly filename and a short internal report ID."""
+        now = datetime.now()
+        report_id = f"REP-{now.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}"
+        filename = f"Report_{now.strftime('%A_%Y-%m-%d_%H-%M-%S')}_{report_id}.pdf"
+        return report_id, filename
+
+    def write_report_metadata_file(self, file_path, document_id, blockchain_report_id, patient_name, patient_age):
+        """Save report identifiers next to the PDF so the agent can recover them later."""
+        metadata_path = f"{os.path.splitext(file_path)[0]}.json"
+        metadata = {
+            "pdf_file": os.path.basename(file_path),
+            "document_id": document_id,
+            "blockchain_report_id": blockchain_report_id,
+            "patient_name": patient_name,
+            "patient_age": patient_age,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+            json.dump(metadata, metadata_file, indent=2)
+        return metadata_path
+
     def Generate_pdf_file(self):
-        if scan_output == " ":
+        if not self.scan_output:
             messagebox.showinfo("Error", "You need to choose an image first!")
             return
 
@@ -228,10 +278,12 @@ class App(ctk.CTk):
         if not Page:
             return
 
+        report_id, default_filename = self.generate_report_metadata()
+
         file_path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF Files", "*.pdf")],
-            initialfile="Rapport.pdf",
+            initialfile=default_filename,
             title="Save PDF Report As"
         )
         if not file_path:
@@ -239,13 +291,25 @@ class App(ctk.CTk):
 
         pdf = PDF()
         pdf.add_page()
-        pdf.Header(Pname, Page, self.name)
-        pdf.Body(scan_output)
+        pdf.Header(Pname, Page, self.name, report_id)
+        pdf.Body(self.scan_output)
         pdf.output(file_path)
+
+        from blockchain import hash_pdf, generate_report_id
+
+        pdf_hash = hash_pdf(file_path)
+        blockchain_report_id = generate_report_id(pdf_hash) if pdf_hash else None
+        metadata_path = self.write_report_metadata_file(
+            file_path,
+            report_id,
+            blockchain_report_id,
+            Pname,
+            Page,
+        )
         
         # Blockchain integration
         try:
-            from blockchain import publish_report
+            from blockchain import publish_report_detailed, load_blockchain_config
             
             blockchain_choice = messagebox.askyesno(
                 "Blockchain Verification", 
@@ -253,31 +317,46 @@ class App(ctk.CTk):
             )
             
             if blockchain_choice:
-                provider_url = "https://mainnet.infura.io/v3/YOUR_INFURA_KEY"
-                contract_address = "0xYOUR_CONTRACT_ADDRESS"
+                blockchain_config = load_blockchain_config()
+                provider_url = blockchain_config.get("rpc_url")
+                contract_address = blockchain_config.get("report_contract_address")
                 
-                success = publish_report(
+                result = publish_report_detailed(
                     file_path, 
                     Pname, 
                     Page,
                     provider_url,
-                    contract_address
+                    contract_address,
+                    doctor_account_address=self.wallet_address
                 )
                 
-                if success:
+                if result["success"]:
                     messagebox.showinfo(
                         "Blockchain Success", 
                         "Report published to blockchain successfully!\n\n"
-                        "You can now verify the report integrity using the verification script."
+                        f"Document ID:\n{report_id}\n\n"
+                        "The report was uploaded to Pinata and anchored on your local chain.\n"
+                        f"Report ID:\n{result.get('report_id', 'Unavailable')}\n\n"
+                        f"Metadata file saved at:\n{metadata_path}\n\n"
+                        "The agent verifier can use this metadata file or auto-compute the ID from the PDF."
                     )
                 else:
                     messagebox.showwarning(
                         "Blockchain Warning", 
                         "PDF saved successfully, but blockchain publishing failed.\n\n"
-                        "Please check your blockchain configuration and try again."
+                        f"Document ID:\n{report_id}\n\n"
+                        f"{result['error']}\n\n"
+                        f"Expected Report ID:\n{result.get('report_id', 'Unavailable')}\n\n"
+                        f"Metadata file saved at:\n{metadata_path}"
                     )
             else:
-                messagebox.showinfo("Success", f"PDF report saved successfully at:\n{file_path}")
+                messagebox.showinfo(
+                    "Success",
+                    f"PDF report saved successfully at:\n{file_path}\n\n"
+                    f"Document ID:\n{report_id}\n\n"
+                    f"Predicted Blockchain Report ID:\n{blockchain_report_id or 'Unavailable'}\n\n"
+                    f"Metadata file:\n{metadata_path}"
+                )
                 
         except ImportError:
             messagebox.showwarning(
@@ -285,13 +364,25 @@ class App(ctk.CTk):
                 "Blockchain module not found. PDF saved successfully.\n\n"
                 "Install blockchain dependencies: pip install web3 eth-account eth-utils"
             )
-            messagebox.showinfo("Success", f"PDF report saved successfully at:\n{file_path}")
+            messagebox.showinfo(
+                "Success",
+                f"PDF report saved successfully at:\n{file_path}\n\n"
+                f"Document ID:\n{report_id}\n\n"
+                f"Predicted Blockchain Report ID:\n{blockchain_report_id or 'Unavailable'}\n\n"
+                f"Metadata file:\n{metadata_path}"
+            )
         except Exception as e:
             messagebox.showerror(
                 "Blockchain Error", 
                 f"PDF saved successfully, but blockchain error occurred:\n{str(e)}"
             )
-            messagebox.showinfo("Success", f"PDF report saved successfully at:\n{file_path}")
+            messagebox.showinfo(
+                "Success",
+                f"PDF report saved successfully at:\n{file_path}\n\n"
+                f"Document ID:\n{report_id}\n\n"
+                f"Predicted Blockchain Report ID:\n{blockchain_report_id or 'Unavailable'}\n\n"
+                f"Metadata file:\n{metadata_path}"
+            )
 
 if __name__ == "__main__":
     app = App(ai_ready=False)

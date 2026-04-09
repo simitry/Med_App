@@ -17,6 +17,7 @@ MAIN_SCRIPT = os.path.join(BASE_DIR, "main.py")
 # create empty sqlite database
 os.makedirs(DATABASE_DIR, exist_ok=True)
 conn = sqlite3.connect(DATABASE_PATH)
+conn.row_factory = sqlite3.Row
 c = conn.cursor()
 
 def check_table(table_name):
@@ -34,10 +35,66 @@ if not check_table("login"):
               Name TEXT,
               Email TEXT,
               Password TEXT,
-              Hospital TEXT
+              Hospital TEXT,
+              WalletAddress TEXT,
+              BlockchainRegistered INTEGER DEFAULT 0
               )""")
     
     conn.commit()
+
+
+def get_table_columns(table_name):
+    c.execute(f"PRAGMA table_info({table_name})")
+    return {row["name"] for row in c.fetchall()}
+
+
+def ensure_login_schema():
+    """Migrate the login table so each doctor can be linked to a blockchain wallet."""
+    columns = get_table_columns("login")
+
+    if "WalletAddress" not in columns:
+        c.execute("ALTER TABLE login ADD COLUMN WalletAddress TEXT")
+
+    if "BlockchainRegistered" not in columns:
+        c.execute("ALTER TABLE login ADD COLUMN BlockchainRegistered INTEGER DEFAULT 0")
+
+    conn.commit()
+
+
+def get_registered_wallets(exclude_email=None):
+    """Return wallet addresses already assigned to doctors in SQLite."""
+    if exclude_email:
+        c.execute(
+            "SELECT WalletAddress FROM login WHERE WalletAddress IS NOT NULL AND WalletAddress != '' AND Email != ?",
+            (exclude_email,),
+        )
+    else:
+        c.execute("SELECT WalletAddress FROM login WHERE WalletAddress IS NOT NULL AND WalletAddress != ''")
+
+    return [row["WalletAddress"] for row in c.fetchall()]
+
+
+def ensure_blockchain_identity(name, email, hospital, preferred_wallet=None):
+    """Assign a doctor wallet and ensure the doctor is registered on-chain."""
+    try:
+        from blockchain import provision_doctor_identity
+
+        return provision_doctor_identity(
+            doctor_name=name,
+            doctor_email=email,
+            doctor_hospital=hospital,
+            preferred_wallet=preferred_wallet,
+            used_wallets=get_registered_wallets(exclude_email=email),
+        )
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"Blockchain identity setup failed: {exc}",
+            "wallet_address": preferred_wallet,
+        }
+
+
+ensure_login_schema()
 
 
 class App(ctk.CTk):
@@ -154,9 +211,35 @@ class App(ctk.CTk):
         data = c.fetchone()
 
         if data:
+            wallet_address = data["WalletAddress"]
+            blockchain_registered = bool(data["BlockchainRegistered"])
+
+            if not wallet_address or not blockchain_registered:
+                identity_result = ensure_blockchain_identity(
+                    name=data["Name"],
+                    email=data["Email"],
+                    hospital=data["Hospital"],
+                    preferred_wallet=wallet_address,
+                )
+                if not identity_result["success"]:
+                    messagebox.showerror("Blockchain Error", identity_result["error"])
+                    return
+
+                wallet_address = identity_result["wallet_address"]
+                blockchain_registered = True
+                c.execute(
+                    "UPDATE login SET WalletAddress = ?, BlockchainRegistered = ? WHERE Email = ?",
+                    (wallet_address, 1, email),
+                )
+                conn.commit()
+
             print("Login successful!")
             user = {
-                "name": data[1],
+                "name": data["Name"],
+                "email": data["Email"],
+                "hospital": data["Hospital"],
+                "wallet_address": wallet_address,
+                "blockchain_registered": blockchain_registered,
             }
             with open(CONFIG_PATH, "w", encoding="utf-8")as f:
                 json.dump(user,f,indent= 4)
@@ -178,13 +261,13 @@ class App(ctk.CTk):
         """this function enter the data entered by the user to the sqlite file"""
         
         # get values
-        name=entries[0].get()
-        email = entries[1].get()
+        name=entries[0].get().strip()
+        email = entries[1].get().strip()
         password = entries[2].get()
         conf_password = entries[3].get()
-        hospital = entries[4].get()
+        hospital = entries[4].get().strip()
 
-        if not all([name.strip(), email.strip(), password, conf_password, hospital.strip()]):
+        if not all([name, email, password, conf_password, hospital]):
             messagebox.showerror("Error", "Please fill in all fields.")
             return
 
@@ -195,9 +278,25 @@ class App(ctk.CTk):
                 messagebox.showerror("Error", "An account with this email already exists.")
                 return
 
+            identity_result = ensure_blockchain_identity(
+                name=name,
+                email=email,
+                hospital=hospital,
+            )
+            if not identity_result["success"]:
+                messagebox.showerror("Blockchain Error", identity_result["error"])
+                return
+
             c.execute(
-                "INSERT INTO login (Name,Email,Password,Hospital) VALUES(?, ?, ?, ?)",
-                (name, email, password, hospital),
+                "INSERT INTO login (Name,Email,Password,Hospital,WalletAddress,BlockchainRegistered) VALUES(?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    email,
+                    password,
+                    hospital,
+                    identity_result["wallet_address"],
+                    1,
+                ),
             )
 
             conn.commit()
@@ -206,7 +305,7 @@ class App(ctk.CTk):
         
         #check if the password is the same    
         else :
-            messagebox.showinfo("Error","The password does not match the confirmation")
+            messagebox.showerror("Error","The password does not match the confirmation")
         
 
 if __name__ == "__main__":

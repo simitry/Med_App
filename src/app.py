@@ -14,6 +14,21 @@ BASE_DIR = os.path.dirname(__file__)
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
 PREFERENCES_PATH = os.path.join(PROJECT_ROOT, "preferences.json")
 LOGIN_SCRIPT = os.path.join(BASE_DIR, "login.py")
+AGENT_SCRIPT = os.path.join(BASE_DIR, "agent_app.py")
+
+
+def load_preferences():
+    """Load saved preferences or return defaults."""
+    if not os.path.exists(PREFERENCES_PATH):
+        return dict(data)
+
+    with open(PREFERENCES_PATH, "r", encoding="utf-8") as preferences_file:
+        loaded_data = json.load(preferences_file)
+
+    preferences = dict(data)
+    if loaded_data.get("ThemeColor") and loaded_data.get("Appearance"):
+        preferences.update(loaded_data)
+    return preferences
 
 class SignalHandler:
     """handle the the case of quiting or destroying the app"""
@@ -32,7 +47,7 @@ class SignalHandler:
         return not self.shutdown_requested
 
 class App(ctk.CTk):
-    """preference app class"""
+    """Startup app class."""
     def __init__(self):
         super().__init__()
         self.title("Med App")
@@ -44,44 +59,52 @@ class App(ctk.CTk):
         x = (screen_width // 2) - (500 // 2)
         y = (screen_height // 2) - (500 // 2)
         
-        self.geometry(f"400x400+{x}+{y}")
-        
-        # Set initial theme
-        ctk.set_appearance_mode("system")  # "system", "dark", or "light"
-        ctk.set_default_color_theme("green")  # Default theme green
-        
-        # Build the UI
-        self.rebuild_ui() 
-        
-        if os.path.exists(PREFERENCES_PATH):
-            with open(PREFERENCES_PATH, "r", encoding="utf-8") as f:
-                loaded_data = json.load(f)
-                if loaded_data.get("ThemeColor") and loaded_data.get("Appearance"):
-                    data.update(loaded_data)
-                    self.confirm()
-        else:
-            with open(PREFERENCES_PATH, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
-            print('Json file created')
+        self.geometry(f"460x460+{x}+{y}")
+
+        preferences = load_preferences()
+        data.update(preferences)
+        ctk.set_appearance_mode(data["Appearance"])
+        ctk.set_default_color_theme(data["ThemeColor"])
+        if not os.path.exists(PREFERENCES_PATH):
+            self.create_pref()
+            print("Json file created")
+
+        self.show_role_selection()
                 
-    def rebuild_ui(self):
-        """Destroys and recreates all widgets (to apply new theme)"""
-        # Clear existing widgets
+    def clear_ui(self):
+        """Destroy all current widgets before rebuilding the screen."""
         for widget in self.winfo_children():
             widget.destroy()
-        
-        # Main frame
+
+    def show_role_selection(self):
+        """Show the first window where the user chooses doctor or agent mode."""
+        self.clear_ui()
+
         self.frame = ctk.CTkFrame(self)
         self.frame.pack(pady=20, padx=20, fill="both", expand=True)
-        
-        # Sample button
-        self.button = ctk.CTkButton(self.frame, text="confirm", command=self.confirm)
-        self.button.pack(pady=10)
-        
-        # Color theme switcher
+
+        title = ctk.CTkLabel(self.frame, text="Welcome to Med App", font=ctk.CTkFont(size=24, weight="bold"))
+        title.pack(pady=(30, 10))
+
+        subtitle = ctk.CTkLabel(
+            self.frame,
+            text="Choose how you want to enter the application.",
+            font=ctk.CTkFont(size=13)
+        )
+        subtitle.pack(pady=(0, 24))
+
+        doctor_button = ctk.CTkButton(self.frame, text="Doctor", height=42, command=self.launch_login)
+        doctor_button.pack(padx=30, pady=(0, 14), fill="x")
+
+        agent_button = ctk.CTkButton(self.frame, text="Agent", height=42, command=self.launch_agent)
+        agent_button.pack(padx=30, pady=(0, 28), fill="x")
+
+        settings_label = ctk.CTkLabel(self.frame, text="Display Settings", font=ctk.CTkFont(size=15, weight="bold"))
+        settings_label.pack(pady=(0, 12))
+
         self.theme_label = ctk.CTkLabel(self.frame, text="Color Theme:")
         self.theme_label.pack(pady=(10, 5))
-        
+
         self.theme_menu = ctk.CTkOptionMenu(
             self.frame,
             values=["blue", "green", "dark-blue"],
@@ -101,12 +124,15 @@ class App(ctk.CTk):
         )
         self.mode_menu.pack(pady=5)
         self.mode_menu.set(data["Appearance"])
+
+        save_button = ctk.CTkButton(self.frame, text="Save Preferences", command=self.confirm)
+        save_button.pack(padx=30, pady=(24, 20), fill="x")
     
     def change_color_theme(self, new_theme):
-        """Changes color theme and refreshes UI"""
+        """Change color theme and refresh the startup screen."""
         data["ThemeColor"] = new_theme
         ctk.set_default_color_theme(new_theme)
-        self.rebuild_ui()  # Recreate widgets
+        self.show_role_selection()
     
     def change_appearance_mode(self, new_mode):
         """Changes light/dark mode (works instantly)"""
@@ -117,23 +143,32 @@ class App(ctk.CTk):
         with open(PREFERENCES_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
         print('Json file created')
-    
-    def confirm(self):
-        self.create_pref()
 
-        if os.path.exists(PREFERENCES_PATH):
-            with open(PREFERENCES_PATH, "r", encoding="utf-8") as f:
-                loaded_data = json.load(f)
-                data.update(loaded_data)
-        
+    def launch_login(self):
+        """Close the preferences window and open the login app."""
         self.destroy()
-        
+
         try:
             subprocess.Popen([sys.executable, LOGIN_SCRIPT], cwd=BASE_DIR)
         except Exception as e:
             print(f"Error launching application: {e}")
         finally:
             sys.exit(0)
+
+    def launch_agent(self):
+        """Close the startup window and open the agent verifier."""
+        self.destroy()
+
+        try:
+            subprocess.Popen([sys.executable, AGENT_SCRIPT], cwd=BASE_DIR)
+        except Exception as e:
+            print(f"Error launching application: {e}")
+        finally:
+            sys.exit(0)
+    
+    def confirm(self):
+        self.create_pref()
+        self.show_role_selection()
 
 if __name__ == "__main__":
     app = App()
