@@ -8,12 +8,14 @@ This module supports:
 - doctor integrity checks through DoctorRegistry
 """
 
+import base64
 import hashlib
 import json
 import os
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -30,11 +32,36 @@ try:
 except ImportError:
     WEB3_AVAILABLE = False
 
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    AESGCM = None
+    CRYPTOGRAPHY_AVAILABLE = False
+
+try:
+    from Crypto.Cipher import AES
+    PYCRYPTODOME_AVAILABLE = True
+except ImportError:
+    AES = None
+    PYCRYPTODOME_AVAILABLE = False
+
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "blockchain_config.json"
 PACKAGE_JSON_PATH = PROJECT_ROOT / "package.json"
+
+
+@dataclass
+class EncryptedReport:
+    file_name: str
+    data: bytes
+    key_b64: str
+    nonce_b64: str
+    sha256: str
+    tag_b64: str = ""
+    algorithm: str = "AES-256-GCM"
 
 
 def _resolve_project_path(path_value: Optional[str]) -> Optional[str]:
@@ -114,7 +141,10 @@ class BlockchainManager:
         self.contract = None
         self.doctor_registry = None
         self.web3_available = WEB3_AVAILABLE
+        self.cryptography_available = CRYPTOGRAPHY_AVAILABLE
+        self.pycryptodome_available = PYCRYPTODOME_AVAILABLE
         self.last_error = ""
+        self.last_publish_details: dict[str, Any] = {}
         self.local_node_started = False
 
     def _set_error(self, message: str) -> None:
@@ -383,6 +413,88 @@ class BlockchainManager:
             self._set_error(f"Error uploading to Pinata: {exc}")
             return None
 
+    def encrypt_report_for_ipfs(self, file_path: str) -> Optional[EncryptedReport]:
+        """Encrypt a report before public IPFS/Pinata upload."""
+        if not self.cryptography_available and not self.pycryptodome_available:
+            self._set_error("AES-GCM encryption support is not installed. Install pycryptodome or cryptography.")
+            return None
+
+        if not os.path.exists(file_path):
+            self._set_error(f"File not found: {file_path}")
+            return None
+
+        try:
+            with open(file_path, "rb") as report_file:
+                file_data = report_file.read()
+
+            key = os.urandom(32)
+            nonce = os.urandom(12)
+            tag = b""
+
+            if self.cryptography_available and AESGCM is not None:
+                encrypted_data = AESGCM(key).encrypt(nonce, file_data, None)
+                tag = encrypted_data[-16:]
+            else:
+                cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+                ciphertext, tag = cipher.encrypt_and_digest(file_data)
+                encrypted_data = ciphertext + tag
+
+            encrypted_hash = hashlib.sha256(encrypted_data).hexdigest()
+
+            self.last_error = ""
+            return EncryptedReport(
+                file_name=f"{os.path.basename(file_path)}.enc",
+                data=encrypted_data,
+                key_b64=base64.urlsafe_b64encode(key).decode("ascii"),
+                nonce_b64=base64.urlsafe_b64encode(nonce).decode("ascii"),
+                sha256=encrypted_hash,
+                tag_b64=base64.urlsafe_b64encode(tag).decode("ascii"),
+            )
+        except Exception as exc:
+            self._set_error(f"Error encrypting report: {exc}")
+            return None
+
+    def upload_bytes_to_ipfs(
+        self,
+        file_name: str,
+        payload: bytes,
+        content_type: str = "application/octet-stream"
+    ) -> Optional[str]:
+        """Upload encrypted report bytes to Pinata and return the CID."""
+        if not REQUESTS_AVAILABLE:
+            self._set_error("Requests is not installed. Install with: pip install requests")
+            return None
+
+        headers = self._pinata_headers()
+        if not headers:
+            self._set_error(
+                "Pinata credentials are missing. Set PINATA_JWT or PINATA_API_KEY and "
+                "PINATA_SECRET_API_KEY, or add pinata_jwt / pinata_api_key / pinata_secret_api_key "
+                "to blockchain_config.json."
+            )
+            return None
+
+        endpoint = "https://api.pinata.cloud/pinning/pinFileToIPFS"
+
+        try:
+            files = {"file": (file_name, payload, content_type)}
+            response = requests.post(endpoint, headers=headers, files=files, timeout=60)
+
+            if not response.ok:
+                self._set_error(f"Pinata upload failed: {response.status_code} {response.text}")
+                return None
+
+            cid = response.json().get("IpfsHash")
+            if not cid:
+                self._set_error("Pinata upload succeeded but no CID was returned.")
+                return None
+
+            self.last_error = ""
+            return cid
+        except Exception as exc:
+            self._set_error(f"Error uploading encrypted report to Pinata: {exc}")
+            return None
+
     def check_doctor_integrity(self, doctor_address: Optional[str] = None) -> bool:
         """Return True when the doctor wallet is registered and active on-chain."""
         if not self.doctor_registry:
@@ -412,6 +524,9 @@ class BlockchainManager:
 
         if not self.web3_available:
             issues.append("web3.py is not installed in the current virtual environment.")
+
+        if not self.cryptography_available and not self.pycryptodome_available:
+            issues.append("AES-GCM encryption support is missing. Install pycryptodome or cryptography.")
 
         if not self.config:
             issues.append("blockchain_config.json was not found.")
@@ -554,14 +669,19 @@ class BlockchainManager:
             return False
 
     def publish_report(self, file_path: str, patient_name: str, patient_age: str) -> bool:
-        """Hash, upload, and publish a PDF report to the blockchain."""
+        """Hash the local PDF, upload an encrypted copy, and publish its CID."""
         try:
+            self.last_publish_details = {}
             pdf_hash = self.hash_pdf(file_path)
             if not pdf_hash:
                 return False
 
             report_id = self.generate_report_id(pdf_hash)
-            cid = self.upload_to_ipfs(file_path)
+            encrypted_report = self.encrypt_report_for_ipfs(file_path)
+            if not encrypted_report:
+                return False
+
+            cid = self.upload_bytes_to_ipfs(encrypted_report.file_name, encrypted_report.data)
             if not cid:
                 return False
 
@@ -574,6 +694,19 @@ class BlockchainManager:
             if not self.check_doctor_integrity():
                 return False
 
+            self.last_publish_details = {
+                "report_id": report_id,
+                "pdf_hash": pdf_hash,
+                "encrypted_cid": cid,
+                "cid": cid,
+                "encrypted_sha256": encrypted_report.sha256,
+                "encryption_algorithm": encrypted_report.algorithm,
+                "encryption_key": encrypted_report.key_b64,
+                "encryption_nonce": encrypted_report.nonce_b64,
+                "encryption_tag": encrypted_report.tag_b64,
+                "encrypted_file_name": encrypted_report.file_name,
+            }
+
             tx_hash = self.contract.functions.publishReport(
                 Web3.to_bytes(hexstr=report_id),
                 Web3.to_bytes(hexstr=pdf_hash),
@@ -584,6 +717,7 @@ class BlockchainManager:
             receipt = self.web3.eth.wait_for_transaction_receipt(tx_hash)
             if receipt.status == 1:
                 print(f"Report published successfully. Transaction: {tx_hash.hex()}")
+                self.last_publish_details["transaction_hash"] = tx_hash.hex()
                 self.last_error = ""
                 return True
 
@@ -714,13 +848,15 @@ def publish_report_detailed(
         }
 
     success = manager.publish_report(file_path, patient_name, patient_age)
-    return {
+    response = {
         "success": success,
         "error": "" if success else (manager.get_last_error() or "Report publishing failed."),
         "issues": [] if success else ([manager.get_last_error()] if manager.get_last_error() else []),
         "report_id": report_id,
         "pdf_hash": pdf_hash,
     }
+    response.update(manager.last_publish_details)
+    return response
 
 
 def provision_doctor_identity(

@@ -2,10 +2,10 @@
 
 Single integrated desktop project for:
 
-- doctor login and local profile storage
+- wallet-based doctor identity and local profile storage
 - AI-assisted X-ray analysis
 - PDF report generation
-- blockchain publication and verification
+- encrypted report upload plus blockchain publication and verification
 
 Run the app with:
 

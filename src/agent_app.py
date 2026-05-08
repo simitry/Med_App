@@ -161,7 +161,8 @@ class VerifierWindow(ctk.CTkToplevel, VerifierMixin):
         super().__init__(parent)
         apply_preferences()
         self.title("Med App - Report Verifier")
-        self.geometry("640x520")
+        self.geometry("760x620")
+        self.minsize(680, 560)
         self.transient(parent)
         self._build_verifier_ui()
 
@@ -173,7 +174,8 @@ class VerifierApp(ctk.CTk, VerifierMixin):
         super().__init__()
         apply_preferences()
         self.title("Med App - Report Verifier")
-        self.geometry("640x520")
+        self.geometry("760x620")
+        self.minsize(680, 560)
         self._build_verifier_ui()
 
 

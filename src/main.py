@@ -10,6 +10,7 @@ from uuid import uuid4
 sys.path.append(os.path.dirname(__file__))
 from pdf import PDF
 from agent_app import open_verifier_window
+from storage import add_doctor_scan, get_scans_for_wallet
 
 BASE_DIR = os.path.dirname(__file__)
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..'))
@@ -27,9 +28,12 @@ class App(ctk.CTk):
         # Center the window
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
-        x = (screen_width // 2) - (800 // 2)
-        y = (screen_height // 2) - (500 // 2)
-        self.geometry(f"800x500+{x}+{y}")
+        window_width = 1100
+        window_height = 720
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+        self.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        self.minsize(980, 640)
         
         # Load appearance settings
         with open(PREFERENCES_PATH, encoding="utf-8") as f:
@@ -38,8 +42,10 @@ class App(ctk.CTk):
             ctk.set_default_color_theme(data['ThemeColor'])
 
         self.scan_image = None
+        self.current_scan_image_path = None
         self.ai_loading = False
         self.scan_output = None
+        self.scan_history = []
         self.show_main_interface()
     
     def show_loading_screen(self):
@@ -79,11 +85,20 @@ class App(ctk.CTk):
         self.frame1.pack(side='left', pady=20, padx=(20,5), fill="both", expand=True)
         
         self.frame2 = ctk.CTkFrame(self)
-        self.frame2.pack(side='right', pady=20, padx=(5,20), fill="both", expand=True)
+        self.frame2.pack(side='right', pady=20, padx=(5,20), fill="y")
+        self.frame2.configure(width=320)
+        self.frame2.pack_propagate(False)
         
-        # Results display area in frame1
-        self.results_frame = ctk.CTkScrollableFrame(self.frame1)
+        self.tabview = ctk.CTkTabview(self.frame1)
+        self.tabview.pack(pady=10, padx=10, fill="both", expand=True)
+        self.current_scan_tab = self.tabview.add("Current Scan")
+        self.history_tab = self.tabview.add("Previous Scans")
+
+        self.results_frame = ctk.CTkScrollableFrame(self.current_scan_tab)
         self.results_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        self.history_frame = ctk.CTkScrollableFrame(self.history_tab)
+        self.history_frame.pack(pady=10, padx=10, fill="both", expand=True)
         
         # Load user name
         self.name = "Doctor"
@@ -140,6 +155,8 @@ class App(ctk.CTk):
         status_label = ctk.CTkLabel(self.frame2, text=status_text, font=("Arial", 12))
         status_label.pack(padx=20, pady=(0, 10))
 
+        self.refresh_scan_history()
+
     def upload_file(self):
         """Handle file upload and processing"""
         if not self.ensure_ai_loaded():
@@ -152,8 +169,10 @@ class App(ctk.CTk):
         
         if file_path:
             try:
+                self.current_scan_image_path = file_path
                 self.scan_output = self.scan_image(file_path)
                 self.display_results(self.scan_output)
+                self.tabview.set("Current Scan")
             except Exception as e:
                 messagebox.showerror("Error", f"Error processing image: {e}")
 
@@ -235,6 +254,112 @@ class App(ctk.CTk):
             )
             result_label.pack(anchor="w", pady=2)
 
+    def refresh_scan_history(self):
+        """Reload this doctor's previous reports from local storage."""
+        self.scan_history = get_scans_for_wallet(self.wallet_address) if self.wallet_address else []
+        self.display_scan_history()
+
+    def display_scan_history(self):
+        for widget in self.history_frame.winfo_children():
+            widget.destroy()
+
+        title = ctk.CTkLabel(
+            self.history_frame,
+            text="Previous Scans",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        title.pack(pady=(0, 10), anchor="w")
+
+        if not self.scan_history:
+            empty_label = ctk.CTkLabel(
+                self.history_frame,
+                text="No previous scans for this wallet yet.",
+                font=ctk.CTkFont(size=12)
+            )
+            empty_label.pack(anchor="w", pady=(0, 8))
+            return
+
+        for scan in self.scan_history:
+            row = ctk.CTkFrame(self.history_frame)
+            row.pack(fill="x", pady=(0, 8))
+
+            created_at = scan.get("CreatedAt", "")
+            patient = scan.get("PatientName") or "Unknown patient"
+            status = scan.get("BlockchainStatus") or "local"
+            document_id = scan.get("DocumentId") or "No document ID"
+            encrypted_cid = scan.get("EncryptedCid") or ""
+            pdf_path = scan.get("PdfPath") or ""
+            pdf_name = os.path.basename(pdf_path) if pdf_path else "No PDF saved"
+
+            summary = (
+                f"{created_at}\n"
+                f"Patient: {patient} ({scan.get('PatientAge') or 'age unknown'})\n"
+                f"Document: {document_id}\n"
+                f"Blockchain: {status}\n"
+                f"PDF: {pdf_name}"
+            )
+            if encrypted_cid:
+                summary += f"\nEncrypted CID: {encrypted_cid}"
+
+            ctk.CTkLabel(row, text=summary, justify="left", wraplength=560).pack(
+                side="left",
+                padx=10,
+                pady=10,
+                fill="x",
+                expand=True,
+            )
+
+            actions = ctk.CTkFrame(row, fg_color="transparent")
+            actions.pack(side="right", padx=10, pady=10)
+
+            pdf_exists = bool(pdf_path and os.path.exists(pdf_path))
+            view_button = ctk.CTkButton(
+                actions,
+                text="View PDF",
+                width=96,
+                state="normal" if pdf_exists else "disabled",
+                command=lambda path=pdf_path: self.open_pdf(path),
+            )
+            view_button.pack(pady=(0, 8))
+
+            folder_button = ctk.CTkButton(
+                actions,
+                text="Folder",
+                width=96,
+                state="normal" if pdf_exists else "disabled",
+                command=lambda path=pdf_path: self.open_pdf_folder(path),
+            )
+            folder_button.pack()
+
+    def open_pdf_folder(self, pdf_path):
+        if not pdf_path or not os.path.exists(pdf_path):
+            messagebox.showerror("Missing file", "The PDF file for this scan was not found.")
+            return
+
+        try:
+            if os.name == "nt":
+                import subprocess
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(pdf_path)])
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", os.path.dirname(pdf_path)])
+        except Exception as exc:
+            messagebox.showerror("Open folder", f"Could not open the PDF folder: {exc}")
+
+    def open_pdf(self, pdf_path):
+        if not pdf_path or not os.path.exists(pdf_path):
+            messagebox.showerror("Missing file", "The PDF file for this scan was not found.")
+            return
+
+        try:
+            if os.name == "nt":
+                os.startfile(pdf_path)
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", pdf_path])
+        except Exception as exc:
+            messagebox.showerror("Open PDF", f"Could not open the PDF: {exc}")
+
     def generate_report_metadata(self):
         """Create a human-friendly filename and a short internal report ID."""
         now = datetime.now()
@@ -242,7 +367,15 @@ class App(ctk.CTk):
         filename = f"Report_{now.strftime('%A_%Y-%m-%d_%H-%M-%S')}_{report_id}.pdf"
         return report_id, filename
 
-    def write_report_metadata_file(self, file_path, document_id, blockchain_report_id, patient_name, patient_age):
+    def write_report_metadata_file(
+        self,
+        file_path,
+        document_id,
+        blockchain_report_id,
+        patient_name,
+        patient_age,
+        extra_metadata=None
+    ):
         """Save report identifiers next to the PDF so the agent can recover them later."""
         metadata_path = f"{os.path.splitext(file_path)[0]}.json"
         metadata = {
@@ -253,9 +386,41 @@ class App(ctk.CTk):
             "patient_age": patient_age,
             "generated_at": datetime.now().isoformat(timespec="seconds"),
         }
+        if extra_metadata:
+            metadata.update(extra_metadata)
         with open(metadata_path, "w", encoding="utf-8") as metadata_file:
             json.dump(metadata, metadata_file, indent=2)
         return metadata_path
+
+    def remember_scan(
+        self,
+        patient_name,
+        patient_age,
+        file_path,
+        metadata_path,
+        document_id,
+        pdf_hash,
+        blockchain_report_id,
+        blockchain_status,
+        publish_result=None,
+    ):
+        publish_result = publish_result or {}
+        add_doctor_scan({
+            "wallet_address": self.wallet_address or "",
+            "doctor_name": self.name,
+            "patient_name": patient_name,
+            "patient_age": patient_age,
+            "scan_image_path": self.current_scan_image_path,
+            "pdf_path": file_path,
+            "metadata_path": metadata_path,
+            "document_id": document_id,
+            "blockchain_report_id": blockchain_report_id,
+            "pdf_hash": pdf_hash,
+            "encrypted_cid": publish_result.get("encrypted_cid") or publish_result.get("cid"),
+            "encryption_algorithm": publish_result.get("encryption_algorithm"),
+            "blockchain_status": blockchain_status,
+        })
+        self.refresh_scan_history()
 
     def Generate_pdf_file(self):
         if not self.scan_output:
@@ -306,6 +471,8 @@ class App(ctk.CTk):
             Pname,
             Page,
         )
+        blockchain_status = "not_published"
+        publish_result = {}
         
         # Blockchain integration
         try:
@@ -329,18 +496,48 @@ class App(ctk.CTk):
                     contract_address,
                     doctor_account_address=self.wallet_address
                 )
+                publish_result = result
                 
                 if result["success"]:
+                    blockchain_status = "published"
+                    metadata_path = self.write_report_metadata_file(
+                        file_path,
+                        report_id,
+                        result.get("report_id") or blockchain_report_id,
+                        Pname,
+                        Page,
+                        {
+                            "pdf_hash": result.get("pdf_hash"),
+                            "encrypted_cid": result.get("encrypted_cid"),
+                            "encrypted_sha256": result.get("encrypted_sha256"),
+                            "encryption_algorithm": result.get("encryption_algorithm"),
+                            "encryption_key": result.get("encryption_key"),
+                            "encryption_nonce": result.get("encryption_nonce"),
+                            "encryption_tag": result.get("encryption_tag"),
+                        },
+                    )
                     messagebox.showinfo(
                         "Blockchain Success", 
                         "Report published to blockchain successfully!\n\n"
                         f"Document ID:\n{report_id}\n\n"
-                        "The report was uploaded to Pinata and anchored on your local chain.\n"
+                        "The encrypted report was uploaded to Pinata and anchored on your local chain.\n"
                         f"Report ID:\n{result.get('report_id', 'Unavailable')}\n\n"
                         f"Metadata file saved at:\n{metadata_path}\n\n"
                         "The agent verifier can use this metadata file or auto-compute the ID from the PDF."
                     )
                 else:
+                    blockchain_status = "publish_failed"
+                    metadata_path = self.write_report_metadata_file(
+                        file_path,
+                        report_id,
+                        result.get("report_id") or blockchain_report_id,
+                        Pname,
+                        Page,
+                        {
+                            "pdf_hash": result.get("pdf_hash"),
+                            "publish_error": result.get("error"),
+                        },
+                    )
                     messagebox.showwarning(
                         "Blockchain Warning", 
                         "PDF saved successfully, but blockchain publishing failed.\n\n"
@@ -350,6 +547,7 @@ class App(ctk.CTk):
                         f"Metadata file saved at:\n{metadata_path}"
                     )
             else:
+                blockchain_status = "skipped"
                 messagebox.showinfo(
                     "Success",
                     f"PDF report saved successfully at:\n{file_path}\n\n"
@@ -357,8 +555,30 @@ class App(ctk.CTk):
                     f"Predicted Blockchain Report ID:\n{blockchain_report_id or 'Unavailable'}\n\n"
                     f"Metadata file:\n{metadata_path}"
                 )
+
+            self.remember_scan(
+                Pname,
+                Page,
+                file_path,
+                metadata_path,
+                report_id,
+                pdf_hash,
+                publish_result.get("report_id") or blockchain_report_id,
+                blockchain_status,
+                publish_result,
+            )
                 
         except ImportError:
+            self.remember_scan(
+                Pname,
+                Page,
+                file_path,
+                metadata_path,
+                report_id,
+                pdf_hash,
+                blockchain_report_id,
+                "blockchain_module_missing",
+            )
             messagebox.showwarning(
                 "Blockchain Module Missing", 
                 "Blockchain module not found. PDF saved successfully.\n\n"
@@ -372,6 +592,16 @@ class App(ctk.CTk):
                 f"Metadata file:\n{metadata_path}"
             )
         except Exception as e:
+            self.remember_scan(
+                Pname,
+                Page,
+                file_path,
+                metadata_path,
+                report_id,
+                pdf_hash,
+                blockchain_report_id,
+                "blockchain_error",
+            )
             messagebox.showerror(
                 "Blockchain Error", 
                 f"PDF saved successfully, but blockchain error occurred:\n{str(e)}"

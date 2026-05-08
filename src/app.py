@@ -13,7 +13,7 @@ data = {
 BASE_DIR = os.path.dirname(__file__)
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
 PREFERENCES_PATH = os.path.join(PROJECT_ROOT, "preferences.json")
-LOGIN_SCRIPT = os.path.join(BASE_DIR, "login.py")
+WALLET_SCRIPT = os.path.join(BASE_DIR, "login.py")
 AGENT_SCRIPT = os.path.join(BASE_DIR, "agent_app.py")
 
 
@@ -56,10 +56,13 @@ class App(ctk.CTk):
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         
-        x = (screen_width // 2) - (500 // 2)
-        y = (screen_height // 2) - (500 // 2)
+        window_width = 620
+        window_height = 620
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
         
-        self.geometry(f"460x460+{x}+{y}")
+        self.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        self.minsize(560, 560)
 
         preferences = load_preferences()
         data.update(preferences)
@@ -93,7 +96,7 @@ class App(ctk.CTk):
         )
         subtitle.pack(pady=(0, 24))
 
-        doctor_button = ctk.CTkButton(self.frame, text="Doctor", height=42, command=self.launch_login)
+        doctor_button = ctk.CTkButton(self.frame, text="Doctor", height=42, command=self.launch_wallet_connect)
         doctor_button.pack(padx=30, pady=(0, 14), fill="x")
 
         agent_button = ctk.CTkButton(self.frame, text="Agent", height=42, command=self.launch_agent)
@@ -144,12 +147,12 @@ class App(ctk.CTk):
             json.dump(data, f, indent=4)
         print('Json file created')
 
-    def launch_login(self):
-        """Close the preferences window and open the login app."""
+    def launch_wallet_connect(self):
+        """Close the preferences window and open wallet-based doctor entry."""
         self.destroy()
 
         try:
-            subprocess.Popen([sys.executable, LOGIN_SCRIPT], cwd=BASE_DIR)
+            subprocess.Popen([sys.executable, WALLET_SCRIPT], cwd=BASE_DIR)
         except Exception as e:
             print(f"Error launching application: {e}")
         finally:

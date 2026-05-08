@@ -3,9 +3,9 @@
 This project now uses:
 
 - Hardhat for local smart contract development and deployment
-- Pinata for PDF storage on IPFS
+- Pinata for encrypted PDF storage on IPFS
 - `DoctorRegistry` to verify doctor integrity
-- `MedicalReportRegistry` to publish and verify report hashes
+- `MedicalReportRegistry` to publish encrypted report CIDs and verify report hashes
 
 ## Contracts
 
@@ -70,9 +70,11 @@ set PINATA_SECRET_API_KEY=your_pinata_secret
 2. Hardhat deploys `MedicalReportRegistry` with the doctor registry address
 3. The deploy script registers one bootstrap doctor from the local Hardhat accounts
 4. The Python app reads `blockchain_config.json`
-5. When a PDF is created, the app uploads it to Pinata
-6. The report hash is published on-chain only if the configured doctor wallet passes the doctor integrity check
+5. When a PDF is created, the app encrypts it with AES-256-GCM and uploads the encrypted bytes to Pinata
+6. The encrypted CID and report hash are published on-chain only if the connected doctor wallet passes the doctor integrity check
 7. The desktop app shows the generated `Report ID`, which you use later for verification
+
+The encryption key and nonce are saved only in the local sidecar metadata JSON next to the generated PDF. They are not written to the blockchain.
 
 ## App Run
 
