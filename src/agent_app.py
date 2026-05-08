@@ -9,6 +9,7 @@ from blockchain import BlockchainManager, load_blockchain_config
 BASE_DIR = os.path.dirname(__file__)
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
 PREFERENCES_PATH = os.path.join(PROJECT_ROOT, "preferences.json")
+RECOVERED_REPORTS_DIR = os.path.join(PROJECT_ROOT, "downloads", "decrypted_reports")
 
 
 def apply_preferences():
@@ -47,6 +48,13 @@ class VerifierMixin:
 
         self.select_button = ctk.CTkButton(self, text="Select PDF Report", command=self.select_pdf)
         self.select_button.pack(pady=(0, 10))
+
+        self.pinata_button = ctk.CTkButton(
+            self,
+            text="Load Encrypted Report From Pinata",
+            command=self.open_pinata_report_picker
+        )
+        self.pinata_button.pack(pady=(0, 10))
 
         self.file_label = ctk.CTkLabel(self, text="No file selected")
         self.file_label.pack(pady=(0, 16))
@@ -90,6 +98,170 @@ class VerifierMixin:
         self.pdf_path = file_path
         self.file_label.configure(text=os.path.basename(file_path))
         self.autofill_report_id()
+
+    def find_decryptable_pinata_reports(self):
+        """Find local metadata files that can decrypt encrypted Pinata reports."""
+        reports = []
+        skip_dirs = {".git", ".venv", "node_modules", "artifacts", "cache", "blockchain_artifacts"}
+
+        for root, dirs, files in os.walk(PROJECT_ROOT):
+            dirs[:] = [directory for directory in dirs if directory not in skip_dirs]
+
+            for file_name in files:
+                if not file_name.endswith(".json"):
+                    continue
+
+                metadata_path = os.path.join(root, file_name)
+                try:
+                    with open(metadata_path, "r", encoding="utf-8") as metadata_file:
+                        metadata = json.load(metadata_file)
+                except Exception:
+                    continue
+
+                if not all([
+                    metadata.get("encrypted_cid"),
+                    metadata.get("encryption_key"),
+                    metadata.get("encryption_nonce"),
+                    metadata.get("blockchain_report_id"),
+                ]):
+                    continue
+
+                pdf_file = metadata.get("pdf_file") or f"{os.path.splitext(file_name)[0]}.pdf"
+                local_pdf = os.path.join(root, pdf_file)
+                reports.append({
+                    "metadata": metadata,
+                    "metadata_path": metadata_path,
+                    "local_pdf": local_pdf,
+                    "local_exists": os.path.exists(local_pdf),
+                })
+
+        reports.sort(key=lambda report: report["metadata"].get("generated_at", ""), reverse=True)
+        return reports
+
+    def open_pinata_report_picker(self):
+        reports = self.find_decryptable_pinata_reports()
+        if not reports:
+            messagebox.showinfo(
+                "No encrypted reports",
+                "No local metadata with Pinata encryption keys was found.\n\n"
+                "The agent can decrypt Pinata reports only when the local metadata JSON still has the key and nonce."
+            )
+            return
+
+        picker = ctk.CTkToplevel(self)
+        picker.title("Encrypted Pinata Reports")
+        picker.geometry("780x520")
+        picker.minsize(700, 460)
+        picker.transient(self)
+
+        title = ctk.CTkLabel(
+            picker,
+            text="Encrypted Pinata Reports",
+            font=ctk.CTkFont(size=22, weight="bold")
+        )
+        title.pack(pady=(18, 8))
+
+        hint = ctk.CTkLabel(
+            picker,
+            text="Choose a report to use locally, or decrypt it again from Pinata if the PDF is missing.",
+            wraplength=700,
+            justify="left"
+        )
+        hint.pack(padx=20, pady=(0, 12), fill="x")
+
+        list_frame = ctk.CTkScrollableFrame(picker)
+        list_frame.pack(padx=20, pady=(0, 20), fill="both", expand=True)
+
+        for report in reports:
+            metadata = report["metadata"]
+            row = ctk.CTkFrame(list_frame)
+            row.pack(fill="x", pady=(0, 8))
+
+            local_state = "local PDF found" if report["local_exists"] else "local PDF missing"
+            summary = (
+                f"{metadata.get('generated_at', 'Unknown date')}\n"
+                f"Patient: {metadata.get('patient_name', 'Unknown')} ({metadata.get('patient_age', 'age unknown')})\n"
+                f"Document: {metadata.get('document_id', 'Unknown')}\n"
+                f"Pinata CID: {metadata.get('encrypted_cid')}\n"
+                f"Status: {local_state}"
+            )
+            ctk.CTkLabel(row, text=summary, justify="left", wraplength=510).pack(
+                side="left",
+                padx=10,
+                pady=10,
+                fill="x",
+                expand=True,
+            )
+
+            actions = ctk.CTkFrame(row, fg_color="transparent")
+            actions.pack(side="right", padx=10, pady=10)
+
+            use_local_button = ctk.CTkButton(
+                actions,
+                text="Use Local",
+                width=120,
+                state="normal" if report["local_exists"] else "disabled",
+                command=lambda selected=report, window=picker: self.use_local_pinata_report(selected, window),
+            )
+            use_local_button.pack(pady=(0, 8))
+
+            decrypt_button = ctk.CTkButton(
+                actions,
+                text="Decrypt",
+                width=120,
+                command=lambda selected=report, window=picker: self.decrypt_pinata_report(selected, window),
+            )
+            decrypt_button.pack()
+
+    def use_local_pinata_report(self, report, picker):
+        self.pdf_path = report["local_pdf"]
+        self.file_label.configure(text=os.path.basename(self.pdf_path))
+        self.report_id_entry.delete(0, "end")
+        self.report_id_entry.insert(0, report["metadata"].get("blockchain_report_id", ""))
+        self.report_id_hint.configure(text="Report ID loaded from encrypted Pinata metadata.")
+        self._write_result(f"Using local PDF:\n{self.pdf_path}")
+        picker.destroy()
+
+    def decrypt_pinata_report(self, report, picker):
+        metadata = report["metadata"]
+        cid = metadata.get("encrypted_cid")
+
+        decrypted_pdf = self.manager.recover_encrypted_report_from_ipfs(
+            cid=cid,
+            key_b64=metadata.get("encryption_key"),
+            nonce_b64=metadata.get("encryption_nonce"),
+            tag_b64=metadata.get("encryption_tag"),
+        )
+        if decrypted_pdf is None:
+            error_message = self.manager.get_last_error() or "Could not decrypt the selected report."
+            messagebox.showerror("Pinata decrypt failed", error_message)
+            self._write_result(f"Pinata decrypt failed.\n\n{error_message}")
+            return
+
+        os.makedirs(RECOVERED_REPORTS_DIR, exist_ok=True)
+        pdf_file = metadata.get("pdf_file") or f"{metadata.get('document_id', 'recovered_report')}.pdf"
+        recovered_path = os.path.join(RECOVERED_REPORTS_DIR, os.path.basename(pdf_file))
+        metadata_path = f"{os.path.splitext(recovered_path)[0]}.json"
+
+        with open(recovered_path, "wb") as recovered_file:
+            recovered_file.write(decrypted_pdf)
+
+        with open(metadata_path, "w", encoding="utf-8") as recovered_metadata_file:
+            json.dump(metadata, recovered_metadata_file, indent=2)
+
+        self.pdf_path = recovered_path
+        self.file_label.configure(text=os.path.basename(recovered_path))
+        self.report_id_entry.delete(0, "end")
+        self.report_id_entry.insert(0, metadata.get("blockchain_report_id", ""))
+        self.report_id_hint.configure(text="Report decrypted from Pinata and saved locally.")
+        self._write_result(
+            "Recovered encrypted Pinata report.\n\n"
+            f"CID: {cid}\n"
+            f"Saved PDF: {recovered_path}\n"
+            f"Metadata: {metadata_path}"
+        )
+        picker.destroy()
+        messagebox.showinfo("Report recovered", "The report was decrypted from Pinata and is ready to verify.")
 
     def autofill_report_id(self):
         """Load the report id from the sidecar JSON file or compute it from the PDF."""

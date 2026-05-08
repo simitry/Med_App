@@ -495,6 +495,72 @@ class BlockchainManager:
             self._set_error(f"Error uploading encrypted report to Pinata: {exc}")
             return None
 
+    def download_from_ipfs(self, cid: str) -> Optional[bytes]:
+        """Download encrypted report bytes from the configured IPFS gateway."""
+        if not REQUESTS_AVAILABLE:
+            self._set_error("Requests is not installed. Install with: pip install requests")
+            return None
+
+        if not cid:
+            self._set_error("IPFS CID is missing.")
+            return None
+
+        try:
+            gateway = self.ipfs_gateway.rstrip("/") + "/"
+            response = requests.get(f"{gateway}{cid}", timeout=60)
+            if not response.ok:
+                self._set_error(f"IPFS download failed: {response.status_code} {response.text}")
+                return None
+
+            self.last_error = ""
+            return response.content
+        except Exception as exc:
+            self._set_error(f"Error downloading encrypted report from IPFS: {exc}")
+            return None
+
+    def decrypt_encrypted_report_bytes(
+        self,
+        encrypted_data: bytes,
+        key_b64: str,
+        nonce_b64: str,
+        tag_b64: Optional[str] = None
+    ) -> Optional[bytes]:
+        """Decrypt AES-256-GCM report bytes downloaded from IPFS."""
+        if not self.cryptography_available and not self.pycryptodome_available:
+            self._set_error("AES-GCM encryption support is missing. Install pycryptodome or cryptography.")
+            return None
+
+        try:
+            key = base64.urlsafe_b64decode(key_b64)
+            nonce = base64.urlsafe_b64decode(nonce_b64)
+            tag = base64.urlsafe_b64decode(tag_b64) if tag_b64 else encrypted_data[-16:]
+
+            if self.cryptography_available and AESGCM is not None:
+                decrypted_data = AESGCM(key).decrypt(nonce, encrypted_data, None)
+            else:
+                ciphertext = encrypted_data[:-len(tag)] if encrypted_data.endswith(tag) else encrypted_data
+                cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+                decrypted_data = cipher.decrypt_and_verify(ciphertext, tag)
+
+            self.last_error = ""
+            return decrypted_data
+        except Exception as exc:
+            self._set_error(f"Error decrypting report: {exc}")
+            return None
+
+    def recover_encrypted_report_from_ipfs(
+        self,
+        cid: str,
+        key_b64: str,
+        nonce_b64: str,
+        tag_b64: Optional[str] = None
+    ) -> Optional[bytes]:
+        """Download an encrypted report from IPFS and return decrypted PDF bytes."""
+        encrypted_data = self.download_from_ipfs(cid)
+        if encrypted_data is None:
+            return None
+        return self.decrypt_encrypted_report_bytes(encrypted_data, key_b64, nonce_b64, tag_b64)
+
     def check_doctor_integrity(self, doctor_address: Optional[str] = None) -> bool:
         """Return True when the doctor wallet is registered and active on-chain."""
         if not self.doctor_registry:
